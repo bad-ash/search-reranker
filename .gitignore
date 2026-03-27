@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+artifacts/*.json
+artifacts/*.pkl
+artifacts/*.joblib
+artifacts/*.onnx
+dist/
+build/
+*.pyc
+.DS_Store
