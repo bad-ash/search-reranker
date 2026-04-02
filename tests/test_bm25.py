@@ -9,7 +9,7 @@ from training.train import train_bm25_artifact
 def write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
-
+""" Sanity-check test to see if document that matches more query terms scores higher """
 def test_bm25_scores_more_relevant_document_higher() -> None:
     artifact = BM25Artifact.from_corpus(
         [
@@ -24,7 +24,7 @@ def test_bm25_scores_more_relevant_document_higher() -> None:
 
     assert relevant_score > irrelevant_score
 
-
+""" Test artifact training writes a file with correct format/structure """
 def test_train_bm25_artifact_writes_artifact_file(tmp_path: Path) -> None:
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
@@ -55,7 +55,7 @@ def test_train_bm25_artifact_writes_artifact_file(tmp_path: Path) -> None:
     assert payload["b"] == 0.7
     assert artifact.document_frequencies["python"] == 1
 
-
+""" Test that evaluation metrics are perfect for a straightforward dataset """
 def test_evaluate_bm25_reports_perfect_metrics_on_easy_dataset(tmp_path: Path) -> None:
     artifact_path = tmp_path / "artifacts" / "bm25_artifact.json"
     dataset_path = tmp_path / "processed" / "dataset.jsonl"

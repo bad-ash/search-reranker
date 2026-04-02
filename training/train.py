@@ -19,7 +19,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--b", type=float, default=0.75)
     return parser.parse_args()
 
-
+""" 
+    Given a collection of passages via raw_dir and BM25 parameters, trains a BM25 Artifact aka
+    provides it with passages to calculate relevant metrics for scoring.
+"""
 def train_bm25_artifact(
     *,
     raw_dir: Path,

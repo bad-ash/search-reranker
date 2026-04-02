@@ -23,20 +23,28 @@ def parse_args() -> argparse.Namespace:
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
-
+""" Returns the reciprocal of the score rank of the first positive passage encountered """
 def reciprocal_rank(labels: list[int]) -> float:
     for index, label in enumerate(labels, start=1):
         if label == 1:
             return 1.0 / index
     return 0.0
 
-
+""" Returns the percentage of positive passages that are in the top k passages by score """
 def recall_at_k(labels: list[int], total_positives: int, k: int) -> float:
     if total_positives == 0:
         return 0.0
     return sum(labels[:k]) / total_positives
 
+""" 
+Given BM25 configuration (artifact), and a dataset, split, and k values, computes metrics:
+    - query_count: number of queries in the split dataset
+    - mrr: Mean Reciprocal Rank, meaning the reciprocal of the average rank (by BM25 score), of the
+    highest ranked positive candidate passage, across the split dataset
+    - recall@{k}: Recall for each k value passed in, which means the average percent of positive
+    candidate passages contained in the top k candidate passages by rank (BM25 score)
 
+"""
 def evaluate_bm25(
     *,
     artifact_path: Path,

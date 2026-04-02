@@ -24,7 +24,8 @@ class BM25Artifact:
     b: float
 
     """
-        Creates an instance of BM25Artifact given a list of documents
+        Creates an instance of BM25Artifact given a list of documents.
+        Basically calculates metrics that are represented by this class's fields.
     """
     
     @classmethod
