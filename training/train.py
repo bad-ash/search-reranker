@@ -19,10 +19,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--b", type=float, default=0.75)
     return parser.parse_args()
 
-""" 
-    Given a collection of passages via raw_dir and BM25 parameters, trains a BM25 Artifact aka
-    provides it with passages to calculate relevant metrics for scoring.
-"""
 def train_bm25_artifact(
     *,
     raw_dir: Path,
@@ -30,6 +26,8 @@ def train_bm25_artifact(
     k1: float,
     b: float,
 ) -> BM25Artifact:
+    """Build and save a BM25 artifact from the raw passage collection."""
+
     collection_path = resolve_required_file(raw_dir.resolve(), "collection.tsv")
     malformed_counts: dict[str, int] = defaultdict(int)
     skipped_counts: dict[str, int] = defaultdict(int)

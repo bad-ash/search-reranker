@@ -19,32 +19,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-path", type=Path, default=DEFAULT_DATASET_PATH)
     return parser.parse_args()
 
-""" Loads a list of JSON objects from the file at path """
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Load a JSON Lines file into a list of dictionaries."""
+
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
-""" Returns the reciprocal of the score rank of the first positive passage encountered """
 def reciprocal_rank(labels: list[int]) -> float:
+    """Return the reciprocal rank of the first relevant result in a ranked label list."""
+
     for index, label in enumerate(labels, start=1):
         if label == 1:
             return 1.0 / index
     return 0.0
 
-""" Returns the percentage of positive passages that are in the top k passages by score """
 def recall_at_k(labels: list[int], total_positives: int, k: int) -> float:
+    """Return the fraction of relevant results retrieved within the top k positions."""
+
     if total_positives == 0:
         return 0.0
     return sum(labels[:k]) / total_positives
 
-""" 
-Given BM25 configuration (artifact), and a dataset, split, and k values, computes metrics:
-    - query_count: number of queries in the split dataset
-    - mrr: Mean Reciprocal Rank, meaning the reciprocal of the average rank (by BM25 score), of the
-    highest ranked positive candidate passage, across the split dataset
-    - recall@{k}: Recall for each k value passed in, which means the average percent of positive
-    candidate passages contained in the top k candidate passages by rank (BM25 score)
-
-"""
 def evaluate_bm25(
     *,
     artifact_path: Path,
@@ -52,6 +46,8 @@ def evaluate_bm25(
     split: str = "test",
     k_values: tuple[int, ...] = DEFAULT_K_VALUES,
 ) -> dict[str, float]:
+    """Evaluate BM25 on one split of the grouped reranking dataset."""
+
     artifact = BM25Artifact.load(artifact_path.resolve())
     scorer = BM25Scorer(artifact)
     records = load_jsonl(dataset_path.resolve())

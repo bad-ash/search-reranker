@@ -16,8 +16,9 @@ DEFAULT_MAX_POSITIVES_PER_QUERY = 3
 DEFAULT_SPLIT_RATIOS = (0.8, 0.1, 0.1)
 DEFAULT_CANDIDATE_FILENAMES = ("top1000.train.tsv", "top1000.tsv", "candidates.tsv")
 
-"""Custom Exception class for errors while preparing IR data"""
 class DataPreparationError(Exception):
+    """Raised when required input files are missing or malformed."""
+
     pass
 
 
@@ -35,8 +36,9 @@ class PreparationStats:
     malformed_counts: dict[str, int]
     skipped_counts: dict[str, int]
 
-""" Define CLI arguments using argparse """
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for dataset preparation."""
+
     parser = argparse.ArgumentParser(
         description="Prepare a small grouped JSONL reranking dataset from MS MARCO raw files."
     )
@@ -84,11 +86,9 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
-""" 
-    Replace runs of whitespace with a single space,
-    and remove leading and trailing whitespace
-"""
 def clean_text(text: str) -> str:
+    """Collapse runs of whitespace and strip surrounding whitespace."""
+
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -100,12 +100,9 @@ def resolve_required_file(raw_dir: Path, filename: str) -> Path:
         )
     return path
 
-""" 
-    Try to resolve candidate file path given candidate_file.
-    If candidate_file not given, try to resolve the DEFAULT_CANDIDATE_FILENAMES.
-    If default names don't resolve, returns None.
-"""
 def resolve_optional_candidate_file(raw_dir: Path, candidate_file: Path | None) -> Path | None:
+    """Resolve an explicit candidate file or fall back to known default filenames."""
+
     if candidate_file is not None:
         candidate_path = candidate_file if candidate_file.is_absolute() else raw_dir / candidate_file
         if not candidate_path.exists():
@@ -121,19 +118,9 @@ def resolve_optional_candidate_file(raw_dir: Path, candidate_file: Path | None) 
             return path
     return None
 
-"""
-    Parse the queries file located at "path" for valid queries and return as a dict[str, str] where:
-        key: query id
-        value: query text
-        
-    Queries file is expected to have a format
-        query_id\tquery_value
-    for each line when rstripped of newlines.
-    
-    If a line does not follow that format, it is considered malformed and the malformed counter is incremented.
-    If a line has either an empty id or value, it is skipped and the skipped counter is incremented.
-"""
 def load_queries(path: Path, malformed_counts: dict[str, int], skipped_counts: dict[str, int]) -> dict[str, str]:
+    """Load non-empty query ids and cleaned query text from a TSV file."""
+
     queries: dict[str, str] = {}
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -152,20 +139,13 @@ def load_queries(path: Path, malformed_counts: dict[str, int], skipped_counts: d
             queries[query_id] = query_text
     return queries
 
-"""
-    Parses collection file at path line by line and returns collection dict[str, str], where
-        key: passage_id
-        value: passage_text_1\t...\tpassage_text_n
-    Assumes format of passage_id\tpassage_text_1\t...\tpassage_text_n for each line
-    If not at least one passage_text in line, adds to malformed counts of collections
-    If id or text empty in line, adds to skipped counts of collection    
-"""
-
 def load_collection(
     path: Path,
     malformed_counts: dict[str, int],
     skipped_counts: dict[str, int],
 ) -> dict[str, str]:
+    """Load passage ids and normalized passage text from a TSV collection file."""
+
     collection: dict[str, str] = {}
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -184,20 +164,13 @@ def load_collection(
             collection[passage_id] = passage_text
     return collection
 
-"""
-    Parses qrels file at path line by line and returns qrels dict[str, set[str]], where
-        key: query_id
-        value: set of passage_ids
-    If less than 4 elements on a line, add to malformed count of qrels
-    If query_id or passage_id is empty, add to malformed count of qrels
-    If relevance score is not one, add to skipped count of qrels
-"""
-
 def load_qrels(
     path: Path,
     malformed_counts: dict[str, int],
     skipped_counts: dict[str, int],
 ) -> dict[str, set[str]]:
+    """Load relevant passage ids per query from a qrels TSV file."""
+
     qrels: dict[str, set[str]] = defaultdict(set)
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -220,17 +193,12 @@ def load_qrels(
             qrels[query_id].add(passage_id)
     return dict(qrels)
 
-"""
-    Parses candidates file at path line by line, and returns candidates dict[str, list[str]], where:
-        key: query_id
-        value: list of passage_ids
-    If less than two elements in line, or query_id/passage_id is empty, add to malformed counts of candidates
-"""
-
 def load_candidates(
     path: Path,
     malformed_counts: dict[str, int],
 ) -> dict[str, list[str]]:
+    """Load candidate passage ids per query from a TSV file."""
+
     candidates: dict[str, list[str]] = defaultdict(list)
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -249,20 +217,17 @@ def load_candidates(
             candidates[query_id].append(passage_id)
     return dict(candidates)
 
-""" Calculate totals for each split based on total_queries and the default split ratios"""
 def choose_split_counts(total_queries: int) -> dict[str, int]:
+    """Allocate train, validation, and test counts from the configured split ratios."""
+
     train_count = int(total_queries * DEFAULT_SPLIT_RATIOS[0])
     val_count = int(total_queries * DEFAULT_SPLIT_RATIOS[1])
     test_count = total_queries - train_count - val_count
     return {"train": train_count, "val": val_count, "test": test_count}
 
-""" 
-    Shuffles list of query_ids, and returns assignments: dict[str, str], where
-        key: query_id
-        value: "train"/"val"/"test"
-    Basically a dict that identifies which split the query belongs to.
-"""
 def assign_splits(query_ids: list[str], rng: random.Random) -> dict[str, str]:
+    """Shuffle query ids and assign each one to train, val, or test."""
+
     shuffled = list(query_ids)
     rng.shuffle(shuffled)
     split_counts = choose_split_counts(len(shuffled))
@@ -278,12 +243,6 @@ def assign_splits(query_ids: list[str], rng: random.Random) -> dict[str, str]:
         assignments[query_id] = "test"
     return assignments
 
-"""
-    For a given query_id, construct a random sample of negative passages as a list[str]
-        - If candidates_by_query exists, use it to construct the list
-        - If it doesn't, use collection_ids
-"""
-
 def select_negative_passages(
     query_id: str,
     positive_ids: set[str],
@@ -293,6 +252,8 @@ def select_negative_passages(
     rng: random.Random,
     skipped_counts: dict[str, int],
 ) -> list[str]:
+    """Choose negative passage ids from candidates when available, otherwise by random sampling."""
+
     if candidates_by_query is not None:
         candidate_pool = [
             passage_id
@@ -311,15 +272,6 @@ def select_negative_passages(
     sample_size = min(negatives_per_query, len(pool))
     return rng.sample(pool, k=sample_size)
 
-
-"""
-    Generate a list of records which contains:
-        query_id
-        the query text
-        a list of positive and negative candidate passages
-        what split this record belongs to.
-    
-"""
 def build_grouped_records(
     queries: dict[str, str],
     collection: dict[str, str],
@@ -332,9 +284,10 @@ def build_grouped_records(
     skipped_counts: dict[str, int],
     candidates_by_query: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
+    """Build grouped per-query reranking records with positive and negative candidates."""
+
     retained_query_ids: list[str] = []
     collection_ids = sorted(collection)
-    # TODO: these for loops feel inefficient. look into possible optimization
     for query_id in sorted(qrels):
         query_text = queries.get(query_id)
         if not query_text:
@@ -347,8 +300,7 @@ def build_grouped_records(
         if not valid_positive_ids:
             skipped_counts["queries_without_valid_positives"] += 1
             continue
-
-        retained_query_ids.append(query_id) # query_ids that resolve and their positive passages resolve
+        retained_query_ids.append(query_id)
 
     rng.shuffle(retained_query_ids)
     limited_query_ids = retained_query_ids[:max_queries]
@@ -402,8 +354,9 @@ def build_grouped_records(
     malformed_counts.setdefault("candidate_file", 0)
     return records
 
-#TODO: Consider making these grouped records an actual class to enforce structure
 def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
+    """Write grouped records to a JSON Lines file."""
+
     with path.open("w", encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record))
@@ -411,13 +364,12 @@ def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
 
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
+    """Write metadata to a formatted JSON file."""
+
     with path.open("w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=2, sort_keys=True)
         handle.write("\n")
 
-"""
-    Writes out grouped records file, metadata file, and returns metadata stats
-"""
 def prepare_dataset(
     *,
     raw_dir: Path,
@@ -428,6 +380,8 @@ def prepare_dataset(
     max_positives_per_query: int,
     candidate_file: Path | None,
 ) -> PreparationStats:
+    """Prepare grouped reranking records, write outputs, and return run statistics."""
+
     if max_queries <= 0:
         raise DataPreparationError("--max-queries must be greater than 0.")
     if negatives_per_query <= 0:
@@ -471,7 +425,6 @@ def prepare_dataset(
     output_jsonl = output_dir / f"{DEFAULT_OUTPUT_NAME}.jsonl"
     output_metadata = output_dir / f"{DEFAULT_OUTPUT_NAME}_metadata.json"
     write_jsonl(output_jsonl, records)
-    #TODO: maybe make train, val and test here enums or something
     split_counts = {
         split: sum(1 for record in records if record["split"] == split)
         for split in ("train", "val", "test")

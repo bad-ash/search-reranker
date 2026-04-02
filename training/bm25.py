@@ -12,6 +12,8 @@ TOKEN_PATTERN = re.compile(r"\w+")
 
 
 def tokenize(text: str) -> list[str]:
+    """Lowercase and tokenize text into word-like terms."""
+
     return TOKEN_PATTERN.findall(text.lower())
 
 
@@ -22,12 +24,6 @@ class BM25Artifact:
     document_frequencies: dict[str, int]
     k1: float
     b: float
-
-    """
-        Creates an instance of BM25Artifact given a list of documents.
-        Basically calculates metrics that are represented by this class's fields.
-    """
-    
     @classmethod
     def from_corpus(
         cls,
@@ -36,6 +32,8 @@ class BM25Artifact:
         k1: float = 1.5,
         b: float = 0.75,
     ) -> BM25Artifact:
+        """Build a BM25 artifact from a corpus of documents."""
+
         if not documents:
             raise ValueError("Cannot build a BM25 artifact from an empty corpus.")
 
@@ -54,13 +52,10 @@ class BM25Artifact:
             k1=k1,
             b=b,
         )
-
-    """
-        Creates a BM25Artifact instance given a path to a JSON file that defines its fields
-    """
-
     @classmethod
     def load(cls, path: Path) -> BM25Artifact:
+        """Load a BM25 artifact from a JSON file."""
+
         payload = json.loads(path.read_text(encoding="utf-8"))
         return cls(
             document_count=payload["document_count"],
@@ -69,25 +64,21 @@ class BM25Artifact:
             k1=payload["k1"],
             b=payload["b"],
         )
-
-    """
-        Given a path, write this instance's field values into a file as a JSON object
-    """
-    
     def save(self, path: Path) -> None:
+        """Serialize this BM25 artifact to JSON."""
+
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(asdict(self), indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-"""
-    Class that is meant to perform BM25 scoring given a BM25Artifact, a query, and a document
-"""
-
 class BM25Scorer:
+    """Score query-document pairs using a BM25 artifact."""
+
     def __init__(self, artifact: BM25Artifact) -> None:
         self.artifact = artifact
 
-    """ Performs BM25 scoring given a query and a document """
     def score(self, query: str, document: str) -> float:
+        """Compute a BM25 relevance score for one query-document pair."""
+
         query_terms = tokenize(query)
         document_terms = tokenize(document)
         if not query_terms or not document_terms:
@@ -122,4 +113,6 @@ class BM25Scorer:
         return score
 
     def score_documents(self, query: str, documents: list[str]) -> list[float]:
+        """Score a batch of documents for the same query."""
+
         return [self.score(query, document) for document in documents]
