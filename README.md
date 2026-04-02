@@ -14,7 +14,3 @@ This project is intentionally scoped around:
 - containerization
 - testing
 - deployment readiness
-
-## Status
-
-Current step: repo skeleton only.
