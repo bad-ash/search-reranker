@@ -10,6 +10,7 @@ artifacts/*.onnx
 data/
 dist/
 build/
+search_reranker.egg-info/
 *.pyc
 .DS_Store
 .codex
