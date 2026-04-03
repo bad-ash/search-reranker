@@ -88,7 +88,6 @@ def parse_args() -> argparse.Namespace:
 
 def clean_text(text: str) -> str:
     """Collapse runs of whitespace and strip surrounding whitespace."""
-
     return re.sub(r"\s+", " ", text).strip()
 
 
