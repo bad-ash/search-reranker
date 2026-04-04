@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, status
 
@@ -41,18 +42,25 @@ def build_app(*, artifact_path: Path | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def add_request_timing(request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID", str(uuid4()))
+        request.state.request_id = request_id
         start = perf_counter()
         response = await call_next(request)
         duration_ms = round((perf_counter() - start) * 1000.0, 3)
         response.headers["X-Process-Time-Ms"] = str(duration_ms)
+        response.headers["X-Request-ID"] = request_id
+        model = request.app.state.model
         request.app.state.logger.info(
             "Request completed",
             extra={
                 "event": "request_completed",
+                "request_id": request_id,
                 "method": request.method,
                 "path": request.url.path,
                 "status_code": response.status_code,
                 "duration_ms": duration_ms,
+                "num_candidates": getattr(request.state, "num_candidates", None),
+                "model_version": model.model_version if model is not None else None,
             },
         )
         return response
@@ -74,6 +82,7 @@ def build_app(*, artifact_path: Path | None = None) -> FastAPI:
     @app.post("/rerank", response_model=RerankResponse)
     async def rerank(payload: RerankRequest, request: Request) -> RerankResponse:
         model = _get_loaded_model(request)
+        request.state.num_candidates = len(payload.candidates)
         ranked = model.rerank(
             payload.query,
             [

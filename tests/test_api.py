@@ -16,6 +16,7 @@ def test_health_endpoint_returns_ok(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     assert "X-Process-Time-Ms" in response.headers
+    assert "X-Request-ID" in response.headers
 
 
 def test_readiness_endpoint_returns_503_when_model_fails_to_load(tmp_path: Path) -> None:
@@ -52,6 +53,7 @@ def test_rerank_endpoint_returns_scored_results_in_rank_order(tmp_path: Path) ->
     with TestClient(build_app(artifact_path=artifact_path)) as client:
         response = client.post(
             "/rerank",
+            headers={"X-Request-ID": "req-123"},
             json={
                 "query": "python list comprehension",
                 "candidates": [
@@ -67,6 +69,7 @@ def test_rerank_endpoint_returns_scored_results_in_rank_order(tmp_path: Path) ->
     assert [result["id"] for result in payload["results"]] == ["p1", "p2", "p3"]
     assert payload["results"][0]["score"] >= payload["results"][1]["score"]
     assert float(response.headers["X-Process-Time-Ms"]) >= 0.0
+    assert response.headers["X-Request-ID"] == "req-123"
 
 
 def test_rerank_endpoint_returns_503_when_model_not_loaded(tmp_path: Path) -> None:

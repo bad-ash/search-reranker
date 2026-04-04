@@ -31,6 +31,11 @@ class ModelLoadError(Exception):
 class RerankerModel(ABC):
     """Interface for loading an artifact-backed reranker and scoring candidates."""
 
+    @property
+    @abstractmethod
+    def model_version(self) -> str:
+        raise NotImplementedError
+
     @abstractmethod
     def score(self, query: str, document: str) -> float:
         raise NotImplementedError
@@ -43,8 +48,9 @@ class RerankerModel(ABC):
 class BM25Reranker(RerankerModel):
     """Service-side adapter around the BM25 scorer and serialized artifact."""
 
-    def __init__(self, artifact: BM25Artifact) -> None:
+    def __init__(self, artifact: BM25Artifact, artifact_path: Path) -> None:
         self.artifact = artifact
+        self.artifact_path = artifact_path
         self.scorer = BM25Scorer(artifact)
 
     @classmethod
@@ -57,7 +63,11 @@ class BM25Reranker(RerankerModel):
             raise ModelLoadError(f"Artifact file is missing required field: {exc.args[0]}") from exc
         except (TypeError, ValueError) as exc:
             raise ModelLoadError(f"Artifact file is invalid: {artifact_path}") from exc
-        return cls(artifact)
+        return cls(artifact, artifact_path.resolve())
+
+    @property
+    def model_version(self) -> str:
+        return f"bm25:{self.artifact_path.name}"
 
     def score(self, query: str, document: str) -> float:
         return self.scorer.score(query, document)
