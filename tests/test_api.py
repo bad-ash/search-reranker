@@ -97,6 +97,38 @@ def test_rerank_endpoint_returns_503_when_model_not_loaded(tmp_path: Path) -> No
     assert "Artifact file not found" in response.json()["detail"]
 
 
+def test_end_to_end_app_serves_readyz_and_rerank_from_real_artifact(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "artifacts" / "bm25_artifact.json"
+    BM25Artifact.from_corpus(
+        [
+            "python list comprehension tutorial and examples",
+            "generator expressions are similar to list comprehensions",
+            "weather forecast for tomorrow in chicago",
+        ]
+    ).save(artifact_path)
+
+    with TestClient(build_app(artifact_path=artifact_path)) as client:
+        ready_response = client.get("/readyz")
+        rerank_response = client.post(
+            "/rerank",
+            json={
+                "query": "python list comprehension",
+                "candidates": [
+                    {"id": "c1", "text": "weather forecast for tomorrow in chicago"},
+                    {"id": "c2", "text": "python list comprehension tutorial and examples"},
+                    {"id": "c3", "text": "generator expressions are similar to list comprehensions"},
+                ],
+            },
+        )
+
+    assert ready_response.status_code == 200
+    assert ready_response.json() == {"status": "ready", "model_loaded": True}
+
+    assert rerank_response.status_code == 200
+    payload = rerank_response.json()
+    assert [result["id"] for result in payload["results"]] == ["c2", "c3", "c1"]
+
+
 class _SlowReranker(RerankerModel):
     @property
     def model_version(self) -> str:
