@@ -128,3 +128,13 @@ docker run --rm -p 8000:8000 search-reranker
 ```
 
 The container is inference-only and expects a valid `artifacts/bm25_artifact.json` to be present in the build context.
+
+## Baseline Performance
+
+Warm steady-state load tests against the deployed BM25 service on Azure Container Apps produced the following baseline results for the current small rerank payload:
+
+- `10 VUs / 2 min`: `p50=31.11ms`, `p95=38.14ms`, `0.00%` failed requests
+- `25 VUs / 2 min`: `p50=30.73ms`, `p95=37.27ms`, `0.00%` failed requests
+- `25 VUs / 5 min`: `p50=30.73ms`, `p95=37.62ms`, `0.00%` failed requests
+
+These numbers should be treated as the current BM25 reference point for warm service behavior. They do not represent cold-start latency, and they will vary with payload shape and candidate count.
