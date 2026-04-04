@@ -129,6 +129,101 @@ docker run --rm -p 8000:8000 search-reranker
 
 The container is inference-only and expects a valid `artifacts/bm25_artifact.json` to be present in the build context.
 
+## Deployment and Operational Checks
+
+The current deployment target is Azure Container Apps backed by Azure Container Registry.
+
+Build and push an updated image:
+
+```bash
+az acr build \
+  --registry <acr-name> \
+  --image search-reranker:<tag> \
+  .
+```
+
+Update the Container App to the new image:
+
+```bash
+az containerapp update \
+  --name <app-name> \
+  --resource-group <resource-group> \
+  --image <acr-name>.azurecr.io/search-reranker:<tag>
+```
+
+For steady-state testing, keep at least one warm replica:
+
+```bash
+az containerapp update \
+  --name <app-name> \
+  --resource-group <resource-group> \
+  --min-replicas 1
+```
+
+Get the deployed app hostname:
+
+```bash
+az containerapp show \
+  --name <app-name> \
+  --resource-group <resource-group> \
+  --query properties.configuration.ingress.fqdn \
+  -o tsv
+```
+
+Operational checks after each deployment:
+
+1. Verify liveness:
+
+```bash
+curl https://<fqdn>/healthz
+```
+
+2. Verify readiness:
+
+```bash
+curl https://<fqdn>/readyz
+```
+
+3. Verify reranking behavior:
+
+```bash
+curl -X POST https://<fqdn>/rerank \
+  -H "Content-Type: application/json" \
+  -H "X-Request-ID: manual-check-1" \
+  -d '{
+    "query": "python list comprehension",
+    "candidates": [
+      {"id": "c1", "text": "weather forecast for tomorrow in chicago"},
+      {"id": "c2", "text": "python list comprehension tutorial and examples"},
+      {"id": "c3", "text": "paris is the capital city of france"}
+    ]
+  }'
+```
+
+4. Inspect service logs:
+
+```bash
+az containerapp logs show \
+  --name <app-name> \
+  --resource-group <resource-group> \
+  --follow
+```
+
+Useful things to verify in logs and responses:
+
+- `/readyz` returns `200` and `model_loaded=true`
+- `/rerank` returns ranked results with `200`
+- response headers include `X-Request-ID` and `X-Process-Time-Ms`
+- logs include `request_id`, `num_candidates`, `model_version`, `status_code`, and `duration_ms`
+
+If latency looks unexpectedly high, distinguish between:
+
+- cold-start or scale-up latency
+- network/platform latency
+- application processing time
+
+The `X-Process-Time-Ms` header is useful for separating application time from total end-to-end request duration.
+
 ## Baseline Performance
 
 Warm steady-state load tests against the deployed BM25 service on Azure Container Apps produced the following baseline results for the current small rerank payload:
