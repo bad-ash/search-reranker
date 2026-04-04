@@ -1,8 +1,17 @@
+import asyncio
+import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
-from service.api import build_app
+from service.api import (
+    RerankExecutionError,
+    RerankTimeoutError,
+    _execute_rerank,
+    build_app,
+)
+from service.model import CandidateDocument, RerankerModel
 from training.bm25 import BM25Artifact
 
 
@@ -86,3 +95,52 @@ def test_rerank_endpoint_returns_503_when_model_not_loaded(tmp_path: Path) -> No
 
     assert response.status_code == 503
     assert "Artifact file not found" in response.json()["detail"]
+
+
+class _SlowReranker(RerankerModel):
+    @property
+    def model_version(self) -> str:
+        return "test:slow"
+
+    def score(self, query: str, document: str) -> float:
+        return 0.0
+
+    def rerank(self, query: str, candidates: list[CandidateDocument]):
+        time.sleep(0.05)
+        return []
+
+
+class _FailingReranker(RerankerModel):
+    @property
+    def model_version(self) -> str:
+        return "test:failing"
+
+    def score(self, query: str, document: str) -> float:
+        return 0.0
+
+    def rerank(self, query: str, candidates: list[CandidateDocument]):
+        raise RuntimeError("boom")
+
+
+def test_execute_rerank_times_out() -> None:
+    with pytest.raises(RerankTimeoutError, match="exceeded timeout"):
+        asyncio.run(
+            _execute_rerank(
+                model=_SlowReranker(),
+                query="python list comprehension",
+                candidates=[CandidateDocument(id="p1", text="python list comprehension tutorial")],
+                timeout_seconds=0.01,
+            )
+        )
+
+
+def test_execute_rerank_wraps_internal_failure() -> None:
+    with pytest.raises(RerankExecutionError, match="Rerank execution failed"):
+        asyncio.run(
+            _execute_rerank(
+                model=_FailingReranker(),
+                query="python list comprehension",
+                candidates=[CandidateDocument(id="p1", text="python list comprehension tutorial")],
+                timeout_seconds=1.0,
+            )
+        )

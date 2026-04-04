@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
@@ -15,6 +16,17 @@ from service.schemas import (
     RerankRequest,
     RerankResponse,
 )
+
+
+DEFAULT_RERANK_TIMEOUT_SECONDS = 2.0
+
+
+class RerankTimeoutError(Exception):
+    """Raised when reranking exceeds the configured timeout."""
+
+
+class RerankExecutionError(Exception):
+    """Raised when reranking fails for an internal reason."""
 
 
 def build_app(*, artifact_path: Path | None = None) -> FastAPI:
@@ -83,13 +95,45 @@ def build_app(*, artifact_path: Path | None = None) -> FastAPI:
     async def rerank(payload: RerankRequest, request: Request) -> RerankResponse:
         model = _get_loaded_model(request)
         request.state.num_candidates = len(payload.candidates)
-        ranked = model.rerank(
-            payload.query,
-            [
-                CandidateDocument(id=candidate.id, text=candidate.text)
-                for candidate in payload.candidates
-            ],
-        )
+        candidates = [
+            CandidateDocument(id=candidate.id, text=candidate.text)
+            for candidate in payload.candidates
+        ]
+        try:
+            ranked = await _execute_rerank(
+                model=model,
+                query=payload.query,
+                candidates=candidates,
+                timeout_seconds=DEFAULT_RERANK_TIMEOUT_SECONDS,
+            )
+        except RerankTimeoutError as exc:
+            request.app.state.logger.warning(
+                "Rerank timed out",
+                extra={
+                    "event": "rerank_timeout",
+                    "request_id": request.state.request_id,
+                    "num_candidates": len(candidates),
+                    "model_version": model.model_version,
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=str(exc),
+            ) from exc
+        except RerankExecutionError as exc:
+            request.app.state.logger.exception(
+                "Rerank failed",
+                extra={
+                    "event": "rerank_failed",
+                    "request_id": request.state.request_id,
+                    "num_candidates": len(candidates),
+                    "model_version": model.model_version,
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Rerank request failed.",
+            ) from exc
         return RerankResponse(results=ranked)
 
     return app
@@ -103,6 +147,26 @@ def _get_loaded_model(request: Request) -> RerankerModel:
             detail=request.app.state.model_error or "Model not loaded.",
         )
     return model
+
+
+async def _execute_rerank(
+    *,
+    model: RerankerModel,
+    query: str,
+    candidates: list[CandidateDocument],
+    timeout_seconds: float,
+):
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(model.rerank, query, candidates),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError as exc:
+        raise RerankTimeoutError(
+            f"Rerank request exceeded timeout of {timeout_seconds} seconds."
+        ) from exc
+    except Exception as exc:
+        raise RerankExecutionError("Rerank execution failed.") from exc
 
 
 app = build_app()
