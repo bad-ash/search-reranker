@@ -59,6 +59,7 @@ def test_train_bm25_artifact_writes_artifact_file(tmp_path: Path) -> None:
 def test_evaluate_bm25_reports_perfect_metrics_on_easy_dataset(tmp_path: Path) -> None:
     artifact_path = tmp_path / "artifacts" / "bm25_artifact.json"
     dataset_path = tmp_path / "processed" / "dataset.jsonl"
+    report_path = tmp_path / "reports" / "bm25_eval_report.json"
 
     artifact = BM25Artifact.from_corpus(
         [
@@ -93,11 +94,19 @@ def test_evaluate_bm25_reports_perfect_metrics_on_easy_dataset(tmp_path: Path) -
     ]
     write_text(dataset_path, "\n".join(json.dumps(record) for record in records) + "\n")
 
-    metrics = evaluate_bm25(
+    report = evaluate_bm25(
         artifact_path=artifact_path,
         dataset_path=dataset_path,
+        output_path=report_path,
     )
 
-    assert metrics["query_count"] == 2.0
-    assert metrics["mrr"] == 1.0
-    assert metrics["recall@1"] == 1.0
+    assert report["model_type"] == "bm25"
+    assert report["split"] == "test"
+    assert report["summary"]["query_count"] == 2
+    assert report["summary"]["candidate_count_total"] == 4
+    assert report["metrics"]["query_count"] == 2.0
+    assert report["metrics"]["mrr"] == 1.0
+    assert report["metrics"]["recall@1"] == 1.0
+    assert report_path.exists()
+    saved_report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert saved_report == report

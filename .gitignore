@@ -3,10 +3,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-artifacts/*.json
-artifacts/*.pkl
-artifacts/*.joblib
-artifacts/*.onnx
+artifacts/
 data/
 dist/
 build/

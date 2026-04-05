@@ -63,6 +63,8 @@ This writes:
 
 ## Build BM25 Artifact
 
+The `artifacts/` directory is generated local workspace output and is not committed to Git. Build `artifacts/bm25_artifact.json` before running the API locally, building the Docker image, or deploying a new container revision.
+
 Build the BM25 artifact from the raw passage collection:
 
 ```bash
@@ -76,8 +78,19 @@ Evaluate the artifact against the processed dataset:
 ```bash
 python -m training.evaluate \
   --artifact-path artifacts/bm25_artifact.json \
-  --dataset-path data/processed/msmarco_rerank_subset.jsonl
+  --dataset-path data/processed/msmarco_rerank_subset.jsonl \
+  --split test \
+  --output-path artifacts/eval/bm25_eval_report.json
 ```
+
+This writes a JSON evaluation report containing:
+
+- artifact path
+- dataset path
+- evaluated split
+- model type/version
+- query and candidate summary counts
+- ranking metrics
 
 ## Run the API
 
@@ -118,6 +131,10 @@ pytest -q
 Build the image:
 
 ```bash
+python -m training.train \
+  --raw-dir data/raw \
+  --output-artifact artifacts/bm25_artifact.json
+
 docker build -t search-reranker .
 ```
 
@@ -136,6 +153,10 @@ The current deployment target is Azure Container Apps backed by Azure Container 
 Build and push an updated image:
 
 ```bash
+python -m training.train \
+  --raw-dir data/raw \
+  --output-artifact artifacts/bm25_artifact.json
+
 az acr build \
   --registry <acr-name> \
   --image search-reranker:<tag> \
