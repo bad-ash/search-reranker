@@ -60,6 +60,7 @@ def test_evaluate_bm25_reports_perfect_metrics_on_easy_dataset(tmp_path: Path) -
     artifact_path = tmp_path / "artifacts" / "bm25_artifact.json"
     dataset_path = tmp_path / "processed" / "dataset.jsonl"
     report_path = tmp_path / "reports" / "bm25_eval_report.json"
+    diagnostics_path = tmp_path / "reports" / "bm25_query_diagnostics.json"
 
     artifact = BM25Artifact.from_corpus(
         [
@@ -98,6 +99,7 @@ def test_evaluate_bm25_reports_perfect_metrics_on_easy_dataset(tmp_path: Path) -
         artifact_path=artifact_path,
         dataset_path=dataset_path,
         output_path=report_path,
+        diagnostics_path=diagnostics_path,
     )
 
     assert report["model_type"] == "bm25"
@@ -110,3 +112,9 @@ def test_evaluate_bm25_reports_perfect_metrics_on_easy_dataset(tmp_path: Path) -
     assert report_path.exists()
     saved_report = json.loads(report_path.read_text(encoding="utf-8"))
     assert saved_report == report
+    diagnostics_report = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+    assert diagnostics_report["split"] == "test"
+    assert len(diagnostics_report["query_diagnostics"]) == 2
+    worst_query = diagnostics_report["query_diagnostics"][0]
+    assert "first_positive_rank" in worst_query["metrics"]
+    assert "ranked_candidates" in worst_query

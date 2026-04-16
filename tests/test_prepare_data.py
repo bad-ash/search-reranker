@@ -63,6 +63,7 @@ def test_prepare_dataset_creates_grouped_records_and_query_level_splits(tmp_path
     stats = prepare_dataset(
         raw_dir=raw_dir,
         output_dir=output_dir,
+        raw_split="train",
         max_queries=4,
         negatives_per_query=2,
         seed=7,
@@ -109,6 +110,7 @@ def test_prepare_dataset_is_deterministic_with_fixed_seed(tmp_path: Path) -> Non
     prepare_dataset(
         raw_dir=raw_dir,
         output_dir=output_dir_one,
+        raw_split="train",
         max_queries=2,
         negatives_per_query=1,
         seed=11,
@@ -118,6 +120,7 @@ def test_prepare_dataset_is_deterministic_with_fixed_seed(tmp_path: Path) -> Non
     prepare_dataset(
         raw_dir=raw_dir,
         output_dir=output_dir_two,
+        raw_split="train",
         max_queries=2,
         negatives_per_query=1,
         seed=11,
@@ -148,6 +151,7 @@ def test_prepare_dataset_uses_candidate_file_for_negatives_when_present(tmp_path
     prepare_dataset(
         raw_dir=raw_dir,
         output_dir=output_dir,
+        raw_split="train",
         max_queries=1,
         negatives_per_query=1,
         seed=3,
@@ -177,9 +181,42 @@ def test_prepare_dataset_raises_clear_error_when_required_file_is_missing(tmp_pa
         prepare_dataset(
             raw_dir=raw_dir,
             output_dir=output_dir,
+            raw_split="train",
             max_queries=1,
             negatives_per_query=1,
             seed=1,
             max_positives_per_query=1,
             candidate_file=None,
         )
+
+
+def test_prepare_dataset_supports_dev_split_and_split_specific_candidate_file(tmp_path: Path) -> None:
+    raw_dir = tmp_path / "raw"
+    output_dir = tmp_path / "processed"
+    raw_dir.mkdir()
+
+    write_text(raw_dir / "queries.dev.tsv", "q1\tquery one\n")
+    write_text(raw_dir / "collection.tsv", "p1\tpositive one\np2\tcandidate negative\np3\trandom negative\n")
+    write_text(raw_dir / "qrels.dev.tsv", "q1\t0\tp1\t1\n")
+    write_text(raw_dir / "top1000.dev.tsv", "q1\tp2\t1\t9.1\nq1\tp1\t2\t8.0\n")
+
+    stats = prepare_dataset(
+        raw_dir=raw_dir,
+        output_dir=output_dir,
+        raw_split="dev",
+        max_queries=1,
+        negatives_per_query=1,
+        seed=3,
+        max_positives_per_query=1,
+        candidate_file=None,
+    )
+
+    records = read_jsonl(output_dir / "msmarco_rerank_subset.jsonl")
+    negatives = [candidate for candidate in records[0]["candidates"] if candidate["label"] == 0]
+
+    assert stats.source_files["queries"].endswith("queries.dev.tsv")
+    assert stats.source_files["qrels"].endswith("qrels.dev.tsv")
+    assert stats.source_files["candidate_file"].endswith("top1000.dev.tsv")
+    assert stats.split_counts == {"train": 0, "val": 0, "test": 0, "dev": 1}
+    assert records[0]["split"] == "dev"
+    assert negatives[0]["id"] == "p2"

@@ -14,7 +14,7 @@ DEFAULT_QUERY_LIMIT = 500
 DEFAULT_NEGATIVES_PER_QUERY = 10
 DEFAULT_MAX_POSITIVES_PER_QUERY = 3
 DEFAULT_SPLIT_RATIOS = (0.8, 0.1, 0.1)
-DEFAULT_CANDIDATE_FILENAMES = ("top1000.train.tsv", "top1000.tsv", "candidates.tsv")
+DEFAULT_RAW_SPLIT = "train"
 
 class DataPreparationError(Exception):
     """Raised when required input files are missing or malformed."""
@@ -84,6 +84,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional candidate TSV file. If omitted, common filenames in raw-dir are checked.",
     )
+    parser.add_argument(
+        "--raw-split",
+        type=str,
+        choices=("train", "dev"),
+        default=DEFAULT_RAW_SPLIT,
+        help="Which MS MARCO query/qrels split to load from raw-dir.",
+    )
     return parser.parse_args()
 
 def clean_text(text: str) -> str:
@@ -99,7 +106,15 @@ def resolve_required_file(raw_dir: Path, filename: str) -> Path:
         )
     return path
 
-def resolve_optional_candidate_file(raw_dir: Path, candidate_file: Path | None) -> Path | None:
+def resolve_split_filename(prefix: str, raw_split: str, suffix: str = ".tsv") -> str:
+    return f"{prefix}.{raw_split}{suffix}"
+
+
+def resolve_optional_candidate_file(
+    raw_dir: Path,
+    candidate_file: Path | None,
+    raw_split: str,
+) -> Path | None:
     """Resolve an explicit candidate file or fall back to known default filenames."""
 
     if candidate_file is not None:
@@ -111,7 +126,13 @@ def resolve_optional_candidate_file(raw_dir: Path, candidate_file: Path | None) 
             )
         return candidate_path
 
-    for filename in DEFAULT_CANDIDATE_FILENAMES:
+    candidate_filenames = (
+        resolve_split_filename("top1000", raw_split),
+        "top1000.tsv",
+        resolve_split_filename("candidates", raw_split),
+        "candidates.tsv",
+    )
+    for filename in candidate_filenames:
         path = raw_dir / filename
         if path.exists():
             return path
@@ -275,6 +296,7 @@ def build_grouped_records(
     queries: dict[str, str],
     collection: dict[str, str],
     qrels: dict[str, set[str]],
+    raw_split: str,
     max_queries: int,
     negatives_per_query: int,
     max_positives_per_query: int,
@@ -303,7 +325,10 @@ def build_grouped_records(
 
     rng.shuffle(retained_query_ids)
     limited_query_ids = retained_query_ids[:max_queries]
-    split_assignments = assign_splits(limited_query_ids, rng)
+    if raw_split == "dev":
+        split_assignments = {query_id: "dev" for query_id in limited_query_ids}
+    else:
+        split_assignments = assign_splits(limited_query_ids, rng)
 
     records: list[dict[str, Any]] = []
     for query_id in limited_query_ids:
@@ -373,6 +398,7 @@ def prepare_dataset(
     *,
     raw_dir: Path,
     output_dir: Path,
+    raw_split: str,
     max_queries: int,
     negatives_per_query: int,
     seed: int,
@@ -395,10 +421,10 @@ def prepare_dataset(
     malformed_counts: dict[str, int] = defaultdict(int)
     skipped_counts: dict[str, int] = defaultdict(int)
 
-    queries_path = resolve_required_file(raw_dir, "queries.train.tsv")
+    queries_path = resolve_required_file(raw_dir, resolve_split_filename("queries", raw_split))
     collection_path = resolve_required_file(raw_dir, "collection.tsv")
-    qrels_path = resolve_required_file(raw_dir, "qrels.train.tsv")
-    candidate_path = resolve_optional_candidate_file(raw_dir, candidate_file)
+    qrels_path = resolve_required_file(raw_dir, resolve_split_filename("qrels", raw_split))
+    candidate_path = resolve_optional_candidate_file(raw_dir, candidate_file, raw_split)
 
     queries = load_queries(queries_path, malformed_counts, skipped_counts)
     collection = load_collection(collection_path, malformed_counts, skipped_counts)
@@ -412,6 +438,7 @@ def prepare_dataset(
         queries=queries,
         collection=collection,
         qrels=qrels,
+        raw_split=raw_split,
         max_queries=max_queries,
         negatives_per_query=negatives_per_query,
         max_positives_per_query=max_positives_per_query,
@@ -426,7 +453,7 @@ def prepare_dataset(
     write_jsonl(output_jsonl, records)
     split_counts = {
         split: sum(1 for record in records if record["split"] == split)
-        for split in ("train", "val", "test")
+        for split in ("train", "val", "test", "dev")
     }
     total_candidates = sum(len(record["candidates"]) for record in records)
     candidate_source_mode = "candidate_file" if candidate_path is not None else "random_sampling"
@@ -457,6 +484,7 @@ def main() -> None:
     stats = prepare_dataset(
         raw_dir=args.raw_dir,
         output_dir=args.output_dir,
+        raw_split=args.raw_split,
         max_queries=args.max_queries,
         negatives_per_query=args.negatives_per_query,
         seed=args.seed,

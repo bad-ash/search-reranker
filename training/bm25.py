@@ -75,6 +75,17 @@ class BM25Scorer:
 
     def __init__(self, artifact: BM25Artifact) -> None:
         self.artifact = artifact
+    
+    def IDF(self, query: str) -> float:
+        """ Returns IDF score for given query """
+        document_frequency = self.artifact.document_frequencies.get(query, 0)
+        return math.log(
+                1.0
+                + (
+                    (self.artifact.document_count - document_frequency + 0.5)
+                    / (document_frequency + 0.5)
+                )
+            )
 
     def score(self, query: str, document: str) -> float:
         """Compute a BM25 relevance score for one query-document pair."""
@@ -92,21 +103,13 @@ class BM25Scorer:
             frequency = term_frequencies.get(term, 0)
             if frequency == 0:
                 continue
-
-            document_frequency = self.artifact.document_frequencies.get(term, 0)
-            inverse_document_frequency = math.log(
-                1.0
-                + (
-                    (self.artifact.document_count - document_frequency + 0.5)
-                    / (document_frequency + 0.5)
-                )
-            )
+            
             denominator = frequency + self.artifact.k1 * (
                 1.0
                 - self.artifact.b
                 + self.artifact.b * document_length / self.artifact.average_document_length
             )
-            score += inverse_document_frequency * (
+            score += self.IDF(term) * (
                 frequency * (self.artifact.k1 + 1.0) / denominator
             )
 

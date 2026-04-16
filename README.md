@@ -41,8 +41,16 @@ Place the raw MS MARCO files under `data/raw/` with these names:
 
 - `collection.tsv`
 - `queries.train.tsv`
+- `queries.dev.tsv` if you want to build a dev split dataset
 - `qrels.train.tsv`
-- optional: `top1000.train.tsv`, `top1000.tsv`, or `candidates.tsv`
+- `qrels.dev.tsv` if you want to build a dev split dataset
+- optional candidate files matching the selected raw split, for example:
+  - `top1000.train.tsv`
+  - `top1000.dev.tsv`
+  - `top1000.tsv`
+  - `candidates.train.tsv`
+  - `candidates.dev.tsv`
+  - `candidates.tsv`
 
 Prepare a grouped reranking dataset:
 
@@ -50,6 +58,7 @@ Prepare a grouped reranking dataset:
 python -m training.prepare_data \
   --raw-dir data/raw \
   --output-dir data/processed \
+  --raw-split train \
   --max-queries 500 \
   --negatives-per-query 10 \
   --seed 42 \
@@ -60,6 +69,11 @@ This writes:
 
 - `data/processed/msmarco_rerank_subset.jsonl`
 - `data/processed/msmarco_rerank_subset_metadata.json`
+
+Behavior by raw split:
+
+- `--raw-split train`: retained queries are reshuffled into local `train` / `val` / `test` records
+- `--raw-split dev`: retained queries keep `split="dev"` so the source evaluation semantics are preserved
 
 ## Build BM25 Artifact
 
@@ -80,17 +94,14 @@ python -m training.evaluate \
   --artifact-path artifacts/bm25_artifact.json \
   --dataset-path data/processed/msmarco_rerank_subset.jsonl \
   --split test \
-  --output-path artifacts/eval/bm25_eval_report.json
+  --output-path artifacts/eval/bm25_eval_report.json \
+  --diagnostics-path artifacts/eval/bm25_query_diagnostics.json
 ```
 
-This writes a JSON evaluation report containing:
+This writes:
 
-- artifact path
-- dataset path
-- evaluated split
-- model type/version
-- query and candidate summary counts
-- ranking metrics
+- an aggregate JSON evaluation report containing artifact metadata, dataset metadata, summary counts, and ranking metrics
+- a per-query diagnostics report you can sort to inspect the worst-ranked queries
 
 ## Run the API
 

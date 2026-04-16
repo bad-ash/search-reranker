@@ -11,6 +11,7 @@ from training.bm25 import BM25Artifact, BM25Scorer
 DEFAULT_ARTIFACT_PATH = Path("artifacts/bm25_artifact.json")
 DEFAULT_DATASET_PATH = Path("data/processed/msmarco_rerank_subset.jsonl")
 DEFAULT_REPORT_PATH = Path("artifacts/eval/bm25_eval_report.json")
+DEFAULT_DIAGNOSTICS_PATH = Path("artifacts/eval/bm25_query_diagnostics.json")
 DEFAULT_K_VALUES = (1, 3, 10)
 
 
@@ -20,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-path", type=Path, default=DEFAULT_DATASET_PATH)
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--output-path", type=Path, default=DEFAULT_REPORT_PATH)
+    parser.add_argument("--diagnostics-path", type=Path, default=None)
     return parser.parse_args()
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -41,6 +43,13 @@ def recall_at_k(labels: list[int], total_positives: int, k: int) -> float:
     if total_positives == 0:
         return 0.0
     return sum(labels[:k]) / total_positives
+
+
+def first_positive_rank(labels: list[int]) -> int | None:
+    for index, label in enumerate(labels, start=1):
+        if label == 1:
+            return index
+    return None
 
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
@@ -69,12 +78,15 @@ def build_bm25_evaluation_report(
     reciprocal_ranks: list[float] = []
     recall_scores: dict[int, list[float]] = {k: [] for k in k_values}
     candidate_counts: list[int] = []
+    query_diagnostics: list[dict[str, Any]] = []
 
     for record in split_records:
         candidate_counts.append(len(record["candidates"]))
         scored_candidates = sorted(
             (
                 {
+                    "id": candidate["id"],
+                    "text": candidate["text"],
                     "label": candidate["label"],
                     "score": scorer.score(record["query"], candidate["text"]),
                 }
@@ -85,9 +97,27 @@ def build_bm25_evaluation_report(
         )
         labels = [candidate["label"] for candidate in scored_candidates]
         total_positives = sum(labels)
-        reciprocal_ranks.append(reciprocal_rank(labels))
+        rr = reciprocal_rank(labels)
+        first_rank = first_positive_rank(labels)
+        reciprocal_ranks.append(rr)
         for k in k_values:
             recall_scores[k].append(recall_at_k(labels, total_positives, k))
+        per_query_metrics = {
+            "reciprocal_rank": rr,
+            "first_positive_rank": first_rank,
+        }
+        for k in k_values:
+            per_query_metrics[f"recall@{k}"] = recall_at_k(labels, total_positives, k)
+        query_diagnostics.append(
+            {
+                "query_id": record["query_id"],
+                "query": record["query"],
+                "candidate_count": len(record["candidates"]),
+                "positive_count": total_positives,
+                "metrics": per_query_metrics,
+                "ranked_candidates": scored_candidates,
+            }
+        )
 
     metrics: dict[str, float] = {
         "query_count": float(len(split_records)),
@@ -109,6 +139,7 @@ def build_bm25_evaluation_report(
             "candidate_count_avg": sum(candidate_counts) / len(candidate_counts),
         },
         "metrics": metrics,
+        "query_diagnostics": query_diagnostics,
     }
 
 
@@ -119,6 +150,7 @@ def evaluate_bm25(
     split: str = "test",
     k_values: tuple[int, ...] = DEFAULT_K_VALUES,
     output_path: Path | None = None,
+    diagnostics_path: Path | None = None,
 ) -> dict[str, Any]:
     """Evaluate BM25, optionally write a JSON report, and return the report."""
 
@@ -129,8 +161,25 @@ def evaluate_bm25(
         k_values=k_values,
     )
     if output_path is not None:
-        write_json(output_path.resolve(), report)
-    return report
+        aggregate_report = {key: value for key, value in report.items() if key != "query_diagnostics"}
+        write_json(output_path.resolve(), aggregate_report)
+    if diagnostics_path is not None:
+        diagnostics_report = {
+            "artifact_path": report["artifact_path"],
+            "dataset_path": report["dataset_path"],
+            "model_type": report["model_type"],
+            "model_version": report["model_version"],
+            "split": report["split"],
+            "query_diagnostics": sorted(
+                report["query_diagnostics"],
+                key=lambda item: (
+                    item["metrics"]["reciprocal_rank"],
+                    item["metrics"]["first_positive_rank"] or float("inf"),
+                ),
+            ),
+        }
+        write_json(diagnostics_path.resolve(), diagnostics_report)
+    return {key: value for key, value in report.items() if key != "query_diagnostics"}
 
 
 def main() -> None:
@@ -140,6 +189,7 @@ def main() -> None:
         dataset_path=args.dataset_path,
         split=args.split,
         output_path=args.output_path,
+        diagnostics_path=args.diagnostics_path,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
 
