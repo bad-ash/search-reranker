@@ -116,7 +116,7 @@ Example requests:
 ```bash
 curl http://127.0.0.1:8000/healthz
 curl http://127.0.0.1:8000/readyz
-curl -X POST http://127.0.0.1:8000/rerank \
+curl -X POST http://127.0.0.1:8000/rerank_bm25 \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "python list comprehension",
@@ -127,7 +127,7 @@ curl -X POST http://127.0.0.1:8000/rerank \
   }'
 ```
 
-The service expects `artifacts/bm25_artifact.json` to exist at startup.
+The service expects `artifacts/bm25_artifact.json` to exist at startup and also loads the SBERT model `sentence-transformers/all-MiniLM-L6-v2`.
 
 ## Run Tests
 
@@ -219,7 +219,7 @@ curl https://<fqdn>/readyz
 3. Verify reranking behavior:
 
 ```bash
-curl -X POST https://<fqdn>/rerank \
+curl -X POST https://<fqdn>/rerank_bm25 \
   -H "Content-Type: application/json" \
   -H "X-Request-ID: manual-check-1" \
   -d '{
@@ -243,8 +243,8 @@ az containerapp logs show \
 
 Useful things to verify in logs and responses:
 
-- `/readyz` returns `200` and `model_loaded=true`
-- `/rerank` returns ranked results with `200`
+- `/readyz` returns `200` with `bm25_loaded=true` and `sbert_loaded=true`
+- `/rerank_bm25` and `/rerank_sbert` return ranked results with `200`
 - response headers include `X-Request-ID` and `X-Process-Time-Ms`
 - logs include `request_id`, `num_candidates`, `model_version`, `status_code`, and `duration_ms`
 

@@ -9,7 +9,13 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request, status
 
 from service.logging_config import configure_logging
-from service.model import CandidateDocument, ModelLoadError, RerankerModel, load_model
+from service.model import (
+    CandidateDocument,
+    ModelLoadError,
+    RerankerModel,
+    load_bm25_model,
+    load_sbert_model,
+)
 from service.schemas import (
     HealthResponse,
     ReadinessResponse,
@@ -33,20 +39,39 @@ def build_app(*, artifact_path: Path | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.logger = configure_logging()
-        app.state.model = None
-        app.state.model_error = None
+        app.state.bm25_model = None
+        app.state.bm25_model_error = None
+        app.state.sbert_model = None
+        app.state.sbert_model_error = None
+
         try:
-            app.state.model = load_model(artifact_path) if artifact_path is not None else load_model()
+            app.state.bm25_model = (
+                load_bm25_model(artifact_path) if artifact_path is not None else load_bm25_model()
+            )
         except ModelLoadError as exc:
-            app.state.model_error = str(exc)
+            app.state.bm25_model_error = str(exc)
             app.state.logger.exception(
-                "Model load failed",
-                extra={"event": "model_load_failed", "path": str(artifact_path) if artifact_path else None},
+                "BM25 model load failed",
+                extra={"event": "bm25_model_load_failed", "path": str(artifact_path) if artifact_path else None},
             )
         else:
             app.state.logger.info(
-                "Model loaded",
-                extra={"event": "model_loaded", "path": str(artifact_path) if artifact_path else "default"},
+                "BM25 model loaded",
+                extra={"event": "bm25_model_loaded", "path": str(artifact_path) if artifact_path else "default"},
+            )
+
+        try:
+            app.state.sbert_model = load_sbert_model()
+        except ModelLoadError as exc:
+            app.state.sbert_model_error = str(exc)
+            app.state.logger.exception(
+                "SBERT model load failed",
+                extra={"event": "sbert_model_load_failed"},
+            )
+        else:
+            app.state.logger.info(
+                "SBERT model loaded",
+                extra={"event": "sbert_model_loaded"},
             )
         yield
 
@@ -61,7 +86,7 @@ def build_app(*, artifact_path: Path | None = None) -> FastAPI:
         duration_ms = round((perf_counter() - start) * 1000.0, 3)
         response.headers["X-Process-Time-Ms"] = str(duration_ms)
         response.headers["X-Request-ID"] = request_id
-        model = request.app.state.model
+        model = getattr(request.state, "model", None)
         request.app.state.logger.info(
             "Request completed",
             extra={
@@ -83,68 +108,86 @@ def build_app(*, artifact_path: Path | None = None) -> FastAPI:
 
     @app.get("/readyz", response_model=ReadinessResponse)
     async def readyz(request: Request) -> ReadinessResponse:
-        model_loaded = request.app.state.model is not None
-        if not model_loaded:
+        bm25_loaded = request.app.state.bm25_model is not None
+        sbert_loaded = request.app.state.sbert_model is not None
+        if not (bm25_loaded and sbert_loaded):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=request.app.state.model_error or "Model not loaded.",
+                detail={
+                    "bm25_model_error": request.app.state.bm25_model_error,
+                    "sbert_model_error": request.app.state.sbert_model_error,
+                },
             )
-        return ReadinessResponse(status="ready", model_loaded=True)
+        return ReadinessResponse(status="ready", bm25_loaded=True, sbert_loaded=True)
 
-    @app.post("/rerank", response_model=RerankResponse)
-    async def rerank(payload: RerankRequest, request: Request) -> RerankResponse:
-        model = _get_loaded_model(request)
-        request.state.num_candidates = len(payload.candidates)
-        candidates = [
-            CandidateDocument(id=candidate.id, text=candidate.text)
-            for candidate in payload.candidates
-        ]
-        try:
-            ranked = await _execute_rerank(
-                model=model,
-                query=payload.query,
-                candidates=candidates,
-                timeout_seconds=DEFAULT_RERANK_TIMEOUT_SECONDS,
-            )
-        except RerankTimeoutError as exc:
-            request.app.state.logger.warning(
-                "Rerank timed out",
-                extra={
-                    "event": "rerank_timeout",
-                    "request_id": request.state.request_id,
-                    "num_candidates": len(candidates),
-                    "model_version": model.model_version,
-                },
-            )
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail=str(exc),
-            ) from exc
-        except RerankExecutionError as exc:
-            request.app.state.logger.exception(
-                "Rerank failed",
-                extra={
-                    "event": "rerank_failed",
-                    "request_id": request.state.request_id,
-                    "num_candidates": len(candidates),
-                    "model_version": model.model_version,
-                },
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Rerank request failed.",
-            ) from exc
-        return RerankResponse(results=ranked)
+    @app.post("/rerank_bm25", response_model=RerankResponse)
+    async def rerank_bm25(payload: RerankRequest, request: Request) -> RerankResponse:
+        model = _get_loaded_model(request, model_name="bm25")
+        return await _run_rerank_request(payload, request, model)
+
+    @app.post("/rerank_sbert", response_model=RerankResponse)
+    async def rerank_sbert(payload: RerankRequest, request: Request) -> RerankResponse:
+        model = _get_loaded_model(request, model_name="sbert")
+        return await _run_rerank_request(payload, request, model)
 
     return app
 
 
-def _get_loaded_model(request: Request) -> RerankerModel:
-    model = request.app.state.model
+async def _run_rerank_request(
+    payload: RerankRequest,
+    request: Request,
+    model: RerankerModel,
+) -> RerankResponse:
+    request.state.num_candidates = len(payload.candidates)
+    request.state.model = model
+    candidates = [
+        CandidateDocument(id=candidate.id, text=candidate.text)
+        for candidate in payload.candidates
+    ]
+    try:
+        ranked = await _execute_rerank(
+            model=model,
+            query=payload.query,
+            candidates=candidates,
+            timeout_seconds=DEFAULT_RERANK_TIMEOUT_SECONDS,
+        )
+    except RerankTimeoutError as exc:
+        request.app.state.logger.warning(
+            "Rerank timed out",
+            extra={
+                "event": "rerank_timeout",
+                "request_id": request.state.request_id,
+                "num_candidates": len(candidates),
+                "model_version": model.model_version,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=str(exc),
+        ) from exc
+    except RerankExecutionError as exc:
+        request.app.state.logger.exception(
+            "Rerank failed",
+            extra={
+                "event": "rerank_failed",
+                "request_id": request.state.request_id,
+                "num_candidates": len(candidates),
+                "model_version": model.model_version,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Rerank request failed.",
+        ) from exc
+    return RerankResponse(results=ranked)
+
+
+def _get_loaded_model(request: Request, *, model_name: str) -> RerankerModel:
+    model = getattr(request.app.state, f"{model_name}_model")
     if model is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=request.app.state.model_error or "Model not loaded.",
+            detail=getattr(request.app.state, f"{model_name}_model_error") or "Model not loaded.",
         )
     return model
 

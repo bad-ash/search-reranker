@@ -1,6 +1,8 @@
 import asyncio
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,15 +13,44 @@ from service.api import (
     _execute_rerank,
     build_app,
 )
-from service.model import CandidateDocument, RerankerModel
+from service.model import CandidateDocument, RankedDocument, RerankerModel
 from training.bm25 import BM25Artifact
+
+
+class _FakeSBERTReranker(RerankerModel):
+    @property
+    def model_version(self) -> str:
+        return "test:sbert"
+
+    def score(self, query: str, document: str) -> float:
+        query_terms = set(query.lower().split())
+        document_terms = set(document.lower().split())
+        return float(len(query_terms & document_terms))
+
+    def rerank(self, query: str, candidates: list[CandidateDocument]):
+        ranked = [
+            RankedDocument(
+                id=candidate.id,
+                text=candidate.text,
+                score=self.score(query, candidate.text),
+            )
+            for candidate in candidates
+        ]
+        return sorted(ranked, key=lambda item: item.score, reverse=True)
+
+
+@contextmanager
+def _build_test_client(artifact_path: Path):
+    with patch("service.api.load_sbert_model", return_value=_FakeSBERTReranker()):
+        with TestClient(build_app(artifact_path=artifact_path)) as client:
+            yield client
 
 
 def test_health_endpoint_returns_ok(tmp_path: Path) -> None:
     artifact_path = tmp_path / "artifacts" / "bm25_artifact.json"
     BM25Artifact.from_corpus(["python list comprehension tutorial"]).save(artifact_path)
 
-    with TestClient(build_app(artifact_path=artifact_path)) as client:
+    with _build_test_client(artifact_path) as client:
         response = client.get("/healthz")
 
     assert response.status_code == 200
@@ -31,25 +62,25 @@ def test_health_endpoint_returns_ok(tmp_path: Path) -> None:
 def test_readiness_endpoint_returns_503_when_model_fails_to_load(tmp_path: Path) -> None:
     missing_artifact = tmp_path / "artifacts" / "missing.json"
 
-    with TestClient(build_app(artifact_path=missing_artifact)) as client:
+    with _build_test_client(missing_artifact) as client:
         response = client.get("/readyz")
 
     assert response.status_code == 503
-    assert "Artifact file not found" in response.json()["detail"]
+    assert "Artifact file not found" in response.json()["detail"]["bm25_model_error"]
 
 
 def test_readiness_endpoint_returns_ready_when_model_loads(tmp_path: Path) -> None:
     artifact_path = tmp_path / "artifacts" / "bm25_artifact.json"
     BM25Artifact.from_corpus(["python list comprehension tutorial"]).save(artifact_path)
 
-    with TestClient(build_app(artifact_path=artifact_path)) as client:
+    with _build_test_client(artifact_path) as client:
         response = client.get("/readyz")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "model_loaded": True}
+    assert response.json() == {"status": "ready", "bm25_loaded": True, "sbert_loaded": True}
 
 
-def test_rerank_endpoint_returns_scored_results_in_rank_order(tmp_path: Path) -> None:
+def test_rerank_bm25_endpoint_returns_scored_results_in_rank_order(tmp_path: Path) -> None:
     artifact_path = tmp_path / "artifacts" / "bm25_artifact.json"
     BM25Artifact.from_corpus(
         [
@@ -59,9 +90,9 @@ def test_rerank_endpoint_returns_scored_results_in_rank_order(tmp_path: Path) ->
         ]
     ).save(artifact_path)
 
-    with TestClient(build_app(artifact_path=artifact_path)) as client:
+    with _build_test_client(artifact_path) as client:
         response = client.post(
-            "/rerank",
+            "/rerank_bm25",
             headers={"X-Request-ID": "req-123"},
             json={
                 "query": "python list comprehension",
@@ -81,12 +112,34 @@ def test_rerank_endpoint_returns_scored_results_in_rank_order(tmp_path: Path) ->
     assert response.headers["X-Request-ID"] == "req-123"
 
 
-def test_rerank_endpoint_returns_503_when_model_not_loaded(tmp_path: Path) -> None:
+def test_rerank_sbert_endpoint_returns_scored_results_in_rank_order(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "artifacts" / "bm25_artifact.json"
+    BM25Artifact.from_corpus(["placeholder document"]).save(artifact_path)
+
+    with _build_test_client(artifact_path) as client:
+        response = client.post(
+            "/rerank_sbert",
+            json={
+                "query": "python list comprehension",
+                "candidates": [
+                    {"id": "p2", "text": "weather forecast for tomorrow"},
+                    {"id": "p1", "text": "python list comprehension tutorial"},
+                    {"id": "p3", "text": "capital city of france paris"},
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [result["id"] for result in payload["results"]] == ["p1", "p2", "p3"]
+
+
+def test_rerank_bm25_endpoint_returns_503_when_model_not_loaded(tmp_path: Path) -> None:
     missing_artifact = tmp_path / "artifacts" / "missing.json"
 
-    with TestClient(build_app(artifact_path=missing_artifact)) as client:
+    with _build_test_client(missing_artifact) as client:
         response = client.post(
-            "/rerank",
+            "/rerank_bm25",
             json={
                 "query": "python list comprehension",
                 "candidates": [{"id": "p1", "text": "python list comprehension tutorial"}],
@@ -107,10 +160,10 @@ def test_end_to_end_app_serves_readyz_and_rerank_from_real_artifact(tmp_path: Pa
         ]
     ).save(artifact_path)
 
-    with TestClient(build_app(artifact_path=artifact_path)) as client:
+    with _build_test_client(artifact_path) as client:
         ready_response = client.get("/readyz")
         rerank_response = client.post(
-            "/rerank",
+            "/rerank_bm25",
             json={
                 "query": "python list comprehension",
                 "candidates": [
@@ -122,7 +175,7 @@ def test_end_to_end_app_serves_readyz_and_rerank_from_real_artifact(tmp_path: Pa
         )
 
     assert ready_response.status_code == 200
-    assert ready_response.json() == {"status": "ready", "model_loaded": True}
+    assert ready_response.json() == {"status": "ready", "bm25_loaded": True, "sbert_loaded": True}
 
     assert rerank_response.status_code == 200
     payload = rerank_response.json()

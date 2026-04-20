@@ -31,4 +31,5 @@ class HealthResponse(BaseModel):
 
 class ReadinessResponse(BaseModel):
     status: str
-    model_loaded: bool
+    bm25_loaded: bool
+    sbert_loaded: bool
