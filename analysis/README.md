@@ -1,92 +1,109 @@
-# Lexical Failure Analysis
+# Failure Analysis
 
-## Goal
+This directory contains exploratory analysis utilities for understanding per-query reranking failures from `training.evaluate`.
 
-Analyze the BM25 per-query diagnostics report and identify common failure patterns in the worst-ranked queries.
+The main script is:
 
-Use this to answer:
+- `analysis/lexical_failure_analysis.py`
 
-- Are BM25 failures mostly lexical or semantic?
-- Are top-ranked negatives beating positives because of stronger token overlap?
-- Are there many cases where the positive has little or no lexical overlap with the query?
-- Are there likely annotation / ambiguity cases?
+Supporting utility:
+
+- `analysis/idf_lookup.py`
+
+## Current Scope
+
+`lexical_failure_analysis.py` currently:
+
+- loads a diagnostics report produced by `training.evaluate`
+- filters to failure cases where the first positive is not ranked first
+- extracts the top-ranked negative and first positive passage
+- computes simple overlap and score-difference features
+- optionally enriches matched query terms with BM25 IDF values
+- writes:
+  - a summary JSON
+  - a detailed JSON for failed queries
+
+The script can be used with both BM25 and SBERT diagnostics reports.
+
+BM25-specific enrichment is optional and only happens when `--artifact-path` is provided.
 
 ## Inputs
 
-Expected input:
+Required input:
 
 - a diagnostics report produced by `training.evaluate`, for example:
   - `artifacts/eval/bm25_dev_query_diagnostics.json`
+  - `artifacts/eval/sbert_dev_query_diagnostics.json`
 
-## Deliverables
+Optional input:
 
-Implement the analysis so that it produces:
+- a BM25 artifact for IDF enrichment:
+  - `artifacts/bm25_artifact.json`
 
-1. A summary report with:
-   - number of total queries analyzed
-   - number of failed queries analyzed
-   - counts per failure bucket
+## Output Shape
 
-2. A detailed output file for failed queries with:
-   - query id
-   - query text
-   - first positive rank
-   - first negative rank
-   - top negative score
-   - first positive score
-   - lexical feature values
-   - assigned failure bucket
+The summary output currently includes:
 
-3. A short written interpretation of the results:
-   - what are the most common failure types?
-   - do the failures suggest embeddings are likely to help?
+- `total_queries`
+- `failed_queries`
+- `source_model_type`
+- `source_model_version`
 
-## Suggested Buckets
+The detailed output currently includes:
 
-These are suggested failure categories. You can change them if your analysis supports a better taxonomy.
+- `source_diagnostics_path`
+- `source_model_type`
+- `source_model_version`
+- `failure_records`
 
-- `semantic_miss`
-- `lexical_distractor`
-- `close_lexical_competition`
-- `possible_label_or_ambiguity_issue`
-- `other`
+Each failure record currently includes:
 
-## Suggested Process
+- `query`
+- `top_negative`
+- `first_positive`
+- `score_differential`
+- `pos_doc_ratio`
+- `neg_doc_ratio`
 
-1. Load the diagnostics JSON.
-2. Filter to failed queries.
-   - Suggested rule: `first_positive_rank > 1`
-3. Compute lexical features using the same tokenizer as BM25.
-4. Assign a bucket to each failed query using simple heuristics.
-5. Aggregate counts and inspect representative examples.
-6. Write out summary and detailed reports.
+For BM25-enriched runs, `matched_terms` entries are tuples of:
 
-## Suggested Features
-
-- query token count
-- positive token count
-- top negative token count
-- query-positive token overlap count
-- query-top-negative token overlap count
-- overlap ratio for positive
-- overlap ratio for top negative
-- score gap between top negative and first positive
-- whether positive contains all query terms
-- whether top negative contains all query terms
+- query term
+- IDF score
+- occurrence count in the candidate text
 
 ## Run
 
-Example:
+BM25 diagnostics with IDF enrichment:
 
 ```bash
 python analysis/lexical_failure_analysis.py \
+  --artifact-path artifacts/bm25_artifact.json \
   --diagnostics-path artifacts/eval/bm25_dev_query_diagnostics.json \
   --summary-output artifacts/eval/bm25_failure_summary.json \
   --details-output artifacts/eval/bm25_failure_details.json
 ```
 
+SBERT diagnostics without BM25 artifact enrichment:
+
+```bash
+python analysis/lexical_failure_analysis.py \
+  --diagnostics-path artifacts/eval/sbert_dev_query_diagnostics.json \
+  --summary-output artifacts/eval/sbert_failure_summary.json \
+  --details-output artifacts/eval/sbert_failure_details.json
+```
+
+Limit the run to the first `N` failures while iterating:
+
+```bash
+python analysis/lexical_failure_analysis.py \
+  --diagnostics-path artifacts/eval/bm25_dev_query_diagnostics.json \
+  --summary-output artifacts/eval/tmp_summary.json \
+  --details-output artifacts/eval/tmp_details.json \
+  --max-failures 100
+```
+
 ## Notes
 
-- This is exploratory analysis, not production code.
-- Keep the heuristics simple and explicit.
-- Prefer clarity over sophistication.
+- This is exploratory analysis code, not serving-path code.
+- `assign_failure_bucket()` is still a placeholder and currently returns `"other"` for every record.
+- The current script is best used to generate structured failure details for notebook analysis, not final categorical reporting.

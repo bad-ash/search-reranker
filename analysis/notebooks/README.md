@@ -26,7 +26,14 @@ Suggested first analyses:
 - overlap of failed queries between models
 - distributions of `pos_doc_ratio` and `neg_doc_ratio`
 - matched-term counts and IDF comparisons
+- joined analysis on shared failed queries across both models
 
 The starter notebook is:
 
 - `analysis/notebooks/failure_analysis.ipynb`
+
+Notes:
+
+- when merging BM25 and SBERT dataframes in pandas, duplicate column names will default to suffixes like `_x` and `_y` unless you set `suffixes=...`
+- BM25 `matched_terms` may include IDF scores when the failure-analysis script was run with `--artifact-path`
+- SBERT failure details will not contain BM25-specific IDF enrichment unless you add a separate enrichment step
