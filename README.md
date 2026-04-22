@@ -1,29 +1,26 @@
 # Real-time Document Reranking API
 
-Production-shaped ML engineering project focused on online reranking service design
+Production-shaped ML engineering project focused on:
 
-## Project Focus
+- offline evaluation on MS MARCO-style reranking data
+- online serving behind FastAPI
+- model/version-aware deployment
+- logging, timing, and load testing
+- containerization and Azure Container Apps deployment
 
-This project is intentionally scoped around:
+## Current Scope
 
-- online inference
-- clean service boundaries
-- artifact loading at startup
-- latency measurement
-- structured logging
-- containerization
-- testing
-- deployment readiness
+The repository currently includes:
 
-## Status
-
-Current implementation includes:
-
-- data preparation for a small MS MARCO passage-ranking subset
-- a BM25 baseline scorer and artifact builder
-- a service-side model interface
-- FastAPI health, readiness, and rerank endpoints
-- request timing and JSON-formatted service logs
+- MS MARCO subset preparation for `train` and `dev`
+- BM25 artifact building and evaluation
+- SBERT evaluation using `sentence-transformers/all-MiniLM-L6-v2`
+- failure-analysis tooling and notebooks
+- FastAPI endpoints for:
+  - `POST /rerank_bm25`
+  - `POST /rerank_sbert`
+- JSON request logging and request timing
+- Docker packaging for deployment to ACA
 
 ## Local Setup
 
@@ -35,16 +32,27 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
+Run the test suite:
+
+```bash
+pytest -q
+```
+
 ## Data Preparation
 
-Place the raw MS MARCO files under `data/raw/` with these names:
+Place the raw MS MARCO files under `data/raw/`.
+
+Required files:
 
 - `collection.tsv`
 - `queries.train.tsv`
-- `queries.dev.tsv` if you want to build a dev split dataset
 - `qrels.train.tsv`
-- `qrels.dev.tsv` if you want to build a dev split dataset
-- optional candidate files matching the selected raw split, for example:
+
+Optional dev/evaluation files:
+
+- `queries.dev.tsv`
+- `qrels.dev.tsv`
+- candidate files matching the selected split, for example:
   - `top1000.train.tsv`
   - `top1000.dev.tsv`
   - `top1000.tsv`
@@ -52,7 +60,7 @@ Place the raw MS MARCO files under `data/raw/` with these names:
   - `candidates.dev.tsv`
   - `candidates.tsv`
 
-Prepare a grouped reranking dataset:
+Prepare a grouped training subset from raw train data:
 
 ```bash
 python -m training.prepare_data \
@@ -65,19 +73,28 @@ python -m training.prepare_data \
   --max-positives-per-query 3
 ```
 
-This writes:
+Prepare a dev reranking dataset from the official dev split and candidate file:
 
-- `data/processed/msmarco_rerank_subset.jsonl`
-- `data/processed/msmarco_rerank_subset_metadata.json`
+```bash
+python -m training.prepare_data \
+  --raw-dir data/raw \
+  --output-dir data/processed_dev_top1000 \
+  --raw-split dev \
+  --candidate-file top1000.dev \
+  --max-queries 5000 \
+  --negatives-per-query 100 \
+  --seed 42 \
+  --max-positives-per-query 3
+```
 
 Behavior by raw split:
 
-- `--raw-split train`: retained queries are reshuffled into local `train` / `val` / `test` records
-- `--raw-split dev`: retained queries keep `split="dev"` so the source evaluation semantics are preserved
+- `--raw-split train`: retained queries are reshuffled into local `train` / `val` / `test`
+- `--raw-split dev`: retained queries keep `split="dev"` so the original evaluation semantics are preserved
 
-## Build BM25 Artifact
+## Build the BM25 Artifact
 
-The `artifacts/` directory is generated local workspace output and is not committed to Git. Build `artifacts/bm25_artifact.json` before running the API locally, building the Docker image, or deploying a new container revision.
+`artifacts/` is generated local workspace output and is not committed to Git.
 
 Build the BM25 artifact from the raw passage collection:
 
@@ -87,36 +104,110 @@ python -m training.train \
   --output-artifact artifacts/bm25_artifact.json
 ```
 
-Evaluate the artifact against the processed dataset:
+## Evaluate Models
+
+### BM25
+
+Evaluate BM25 on the prepared dataset:
 
 ```bash
 python -m training.evaluate \
   --artifact-path artifacts/bm25_artifact.json \
-  --dataset-path data/processed/msmarco_rerank_subset.jsonl \
-  --split test \
-  --output-path artifacts/eval/bm25_eval_report.json \
-  --diagnostics-path artifacts/eval/bm25_query_diagnostics.json
+  --dataset-path data/processed_dev_top1000/msmarco_rerank_subset.jsonl \
+  --split dev \
+  --output-path artifacts/eval/bm25_dev_report.json \
+  --diagnostics-path artifacts/eval/bm25_dev_query_diagnostics.json \
+  --model-type bm25
 ```
 
-This writes:
+### SBERT
 
-- an aggregate JSON evaluation report containing artifact metadata, dataset metadata, summary counts, and ranking metrics
-- a per-query diagnostics report you can sort to inspect the worst-ranked queries
+Evaluate SBERT on the same dataset:
 
-## Run the API
+```bash
+python -m training.evaluate \
+  --dataset-path data/processed_dev_top1000/msmarco_rerank_subset.jsonl \
+  --split dev \
+  --output-path artifacts/eval/sbert_dev_report.json \
+  --diagnostics-path artifacts/eval/sbert_dev_query_diagnostics.json \
+  --model-type sbert
+```
 
-Start the FastAPI service locally:
+These commands write:
+
+- an aggregate JSON report with:
+  - model metadata
+  - dataset metadata
+  - summary counts
+  - `MRR`
+  - `Recall@1`
+  - `Recall@3`
+  - `Recall@10`
+- a per-query diagnostics report suitable for failure analysis
+
+## Failure Analysis
+
+Generate failure summaries/details from a diagnostics report:
+
+```bash
+python analysis/lexical_failure_analysis.py \
+  --diagnostics-path artifacts/eval/bm25_dev_query_diagnostics.json \
+  --summary-output artifacts/eval/bm25_failure_summary.json \
+  --details-output artifacts/eval/bm25_failure_details.json
+```
+
+For BM25-specific IDF enrichment, include the artifact:
+
+```bash
+python analysis/lexical_failure_analysis.py \
+  --artifact-path artifacts/bm25_artifact.json \
+  --diagnostics-path artifacts/eval/bm25_dev_query_diagnostics.json \
+  --summary-output artifacts/eval/bm25_failure_summary.json \
+  --details-output artifacts/eval/bm25_failure_details.json
+```
+
+For interactive comparison of BM25 and SBERT failures:
+
+```bash
+jupyter lab
+```
+
+Starter notebook:
+
+- `analysis/notebooks/failure_analysis.ipynb`
+
+## Run the API Locally
+
+Start the FastAPI service:
 
 ```bash
 uvicorn service.api:app --host 0.0.0.0 --port 8000
 ```
+
+Endpoints:
+
+- `GET /healthz`
+- `GET /readyz`
+- `POST /rerank_bm25`
+- `POST /rerank_sbert`
 
 Example requests:
 
 ```bash
 curl http://127.0.0.1:8000/healthz
 curl http://127.0.0.1:8000/readyz
+
 curl -X POST http://127.0.0.1:8000/rerank_bm25 \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "python list comprehension",
+    "candidates": [
+      {"id": "p1", "text": "python list comprehension tutorial"},
+      {"id": "p2", "text": "weather forecast for tomorrow"}
+    ]
+  }'
+
+curl -X POST http://127.0.0.1:8000/rerank_sbert \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "python list comprehension",
@@ -127,17 +218,22 @@ curl -X POST http://127.0.0.1:8000/rerank_bm25 \
   }'
 ```
 
-The service expects `artifacts/bm25_artifact.json` to exist at startup and also loads the SBERT model `sentence-transformers/all-MiniLM-L6-v2`.
+Important note:
 
-## Run Tests
-
-Run the full test suite:
-
-```bash
-pytest -q
-```
+- BM25 requires `artifacts/bm25_artifact.json`
+- SBERT service startup is currently designed around a baked local cache in `/app/.hf/...`
+- because of that, the most reliable way to exercise the dual-model service end to end is the Docker image path below
 
 ## Docker
+
+The Docker image is the intended runtime path for the dual-model service.
+
+The image:
+
+- installs the app
+- copies the BM25 artifact
+- preloads `sentence-transformers/all-MiniLM-L6-v2` into the image cache
+- runs SBERT with `local_files_only=True` at runtime
 
 Build the image:
 
@@ -155,13 +251,15 @@ Run the container:
 docker run --rm -p 8000:8000 search-reranker
 ```
 
-The container is inference-only and expects a valid `artifacts/bm25_artifact.json` to be present in the build context.
+The build-time preload step is implemented in:
 
-## Deployment and Operational Checks
+- `scripts/preload_models.py`
+
+## Azure Deployment
 
 The current deployment target is Azure Container Apps backed by Azure Container Registry.
 
-Build and push an updated image:
+Build and push a new image:
 
 ```bash
 python -m training.train \
@@ -174,7 +272,7 @@ az acr build \
   .
 ```
 
-Update the Container App to the new image:
+Update the Container App:
 
 ```bash
 az containerapp update \
@@ -183,7 +281,7 @@ az containerapp update \
   --image <acr-name>.azurecr.io/search-reranker:<tag>
 ```
 
-For steady-state testing, keep at least one warm replica:
+For warm steady-state testing, keep one replica warm:
 
 ```bash
 az containerapp update \
@@ -192,7 +290,7 @@ az containerapp update \
   --min-replicas 1
 ```
 
-Get the deployed app hostname:
+Get the deployed hostname:
 
 ```bash
 az containerapp show \
@@ -202,7 +300,9 @@ az containerapp show \
   -o tsv
 ```
 
-Operational checks after each deployment:
+## Operational Checks
+
+After each deployment:
 
 1. Verify liveness:
 
@@ -216,12 +316,24 @@ curl https://<fqdn>/healthz
 curl https://<fqdn>/readyz
 ```
 
-3. Verify reranking behavior:
+3. Verify both rerank endpoints:
 
 ```bash
 curl -X POST https://<fqdn>/rerank_bm25 \
   -H "Content-Type: application/json" \
-  -H "X-Request-ID: manual-check-1" \
+  -H "X-Request-ID: bm25-manual-check" \
+  -d '{
+    "query": "python list comprehension",
+    "candidates": [
+      {"id": "c1", "text": "weather forecast for tomorrow in chicago"},
+      {"id": "c2", "text": "python list comprehension tutorial and examples"},
+      {"id": "c3", "text": "paris is the capital city of france"}
+    ]
+  }'
+
+curl -X POST https://<fqdn>/rerank_sbert \
+  -H "Content-Type: application/json" \
+  -H "X-Request-ID: sbert-manual-check" \
   -d '{
     "query": "python list comprehension",
     "candidates": [
@@ -232,7 +344,7 @@ curl -X POST https://<fqdn>/rerank_bm25 \
   }'
 ```
 
-4. Inspect service logs:
+4. Inspect logs:
 
 ```bash
 az containerapp logs show \
@@ -241,27 +353,34 @@ az containerapp logs show \
   --follow
 ```
 
-Useful things to verify in logs and responses:
+Useful checks:
 
 - `/readyz` returns `200` with `bm25_loaded=true` and `sbert_loaded=true`
-- `/rerank_bm25` and `/rerank_sbert` return ranked results with `200`
-- response headers include `X-Request-ID` and `X-Process-Time-Ms`
-- logs include `request_id`, `num_candidates`, `model_version`, `status_code`, and `duration_ms`
+- both rerank endpoints return `200`
+- response headers include:
+  - `X-Request-ID`
+  - `X-Process-Time-Ms`
+- logs include:
+  - `request_id`
+  - `num_candidates`
+  - `model_version`
+  - `status_code`
+  - `duration_ms`
 
-If latency looks unexpectedly high, distinguish between:
+If latency looks high, separate:
 
-- cold-start or scale-up latency
-- network/platform latency
+- cold-start / scale-up time
+- network or platform overhead
 - application processing time
 
-The `X-Process-Time-Ms` header is useful for separating application time from total end-to-end request duration.
+`X-Process-Time-Ms` is the key app-side timing signal.
 
 ## Baseline Performance
 
-Warm steady-state load tests against the deployed BM25 service on Azure Container Apps produced the following baseline results for the current small rerank payload:
+Warm steady-state load tests against the deployed BM25 service on ACA produced:
 
 - `10 VUs / 2 min`: `p50=31.11ms`, `p95=38.14ms`, `0.00%` failed requests
 - `25 VUs / 2 min`: `p50=30.73ms`, `p95=37.27ms`, `0.00%` failed requests
 - `25 VUs / 5 min`: `p50=30.73ms`, `p95=37.62ms`, `0.00%` failed requests
 
-These numbers should be treated as the current BM25 reference point for warm service behavior. They do not represent cold-start latency, and they will vary with payload shape and candidate count.
+These are warm-service BM25 reference numbers, not cold-start numbers. They depend on request shape and candidate count.

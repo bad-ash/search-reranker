@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.vscode/
 artifacts/
 data/
 dist/
@@ -12,3 +13,4 @@ search_reranker.egg-info/
 .DS_Store
 .codex
 loadtest.js
+analysis/notebooks/.ipynb_checkpoints/
