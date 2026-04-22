@@ -1,0 +1,33 @@
+{
+  "date": "2026-04-22",
+  "git_commit": "ae4f15e",
+  "deployment_target": "azure_container_apps",
+  "endpoint": "/rerank_bm25",
+  "model_type": "bm25",
+  "model_version": "bm25:bm25_artifact.json",
+  "dataset_path": "data/processed_dev_top1000/msmarco_rerank_subset.jsonl",
+  "evaluation_split": "dev",
+  "offline_metrics": {
+    "mrr": 0.8961140932296392,
+    "recall@1": 0.8394,
+    "recall@3": 0.9140666666666666,
+    "recall@10": 0.9419666666666666
+  },
+  "load_test": {
+    "tool": "k6",
+    "script": "loadtest_bm25.js",
+    "warm_steady_state": true,
+    "vus": 25,
+    "duration_seconds": 120,
+    "min_replicas": 1,
+    "timeout_seconds": 2.0,
+    "p50_ms": 37.74,
+    "p95_ms": 62.68,
+    "error_rate": 0.0,
+    "throughput_rps": 611.81
+  },
+  "notes": [
+    "BM25 serves as the low-latency lexical baseline.",
+    "This run remained stable with zero failed requests."
+  ]
+}

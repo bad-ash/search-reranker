@@ -1,0 +1,34 @@
+{
+  "date": "2026-04-22",
+  "git_commit": "ae4f15e",
+  "deployment_target": "azure_container_apps",
+  "endpoint": "/rerank_sbert",
+  "model_type": "sbert",
+  "model_version": "all-MiniLM-L6-v2",
+  "dataset_path": "data/processed_dev_top1000/msmarco_rerank_subset.jsonl",
+  "evaluation_split": "dev",
+  "offline_metrics": {
+    "mrr": 0.9565804583472068,
+    "recall@1": 0.9080333333333334,
+    "recall@3": 0.9694,
+    "recall@10": 0.9906333333333334
+  },
+  "load_test": {
+    "tool": "k6",
+    "script": "loadtest_sbert.js",
+    "warm_steady_state": true,
+    "vus": 10,
+    "duration_seconds": 120,
+    "min_replicas": 1,
+    "timeout_seconds": 3.0,
+    "p50_ms": 1790.0,
+    "p95_ms": 2340.0,
+    "error_rate": 0.0,
+    "throughput_rps": 5.83
+  },
+  "notes": [
+    "SBERT materially improved offline quality over BM25 on the shared dev reranking dataset.",
+    "SBERT required a higher per-endpoint timeout budget to remain stable on ACA.",
+    "Latency remains much higher than BM25, which is the main operational tradeoff."
+  ]
+}

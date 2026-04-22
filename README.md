@@ -259,6 +259,23 @@ The build-time preload step is implemented in:
 
 The current deployment target is Azure Container Apps backed by Azure Container Registry.
 
+Reusable deployment script:
+
+```bash
+export ACR_NAME=<acr-name>
+export APP_NAME=<app-name>
+export RESOURCE_GROUP=<resource-group>
+
+./scripts/deploy_aca.sh <tag>
+```
+
+The script performs:
+
+- a local Docker build
+- a local `/healthz` and `/readyz` smoke test
+- `az acr build`
+- `az containerapp update`
+
 Build and push a new image:
 
 ```bash
@@ -384,3 +401,8 @@ Warm steady-state load tests against the deployed BM25 service on ACA produced:
 - `25 VUs / 5 min`: `p50=30.73ms`, `p95=37.62ms`, `0.00%` failed requests
 
 These are warm-service BM25 reference numbers, not cold-start numbers. They depend on request shape and candidate count.
+
+For current benchmark summaries and model tradeoff notes, see:
+
+- `docs/performance.md`
+- `reports/benchmarks/`
