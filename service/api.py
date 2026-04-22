@@ -24,7 +24,8 @@ from service.schemas import (
 )
 
 
-DEFAULT_RERANK_TIMEOUT_SECONDS = 2.0
+DEFAULT_BM25_RERANK_TIMEOUT_SECONDS = 2.0
+DEFAULT_SBERT_RERANK_TIMEOUT_SECONDS = 3.0
 
 
 class RerankTimeoutError(Exception):
@@ -123,12 +124,22 @@ def build_app(*, artifact_path: Path | None = None) -> FastAPI:
     @app.post("/rerank_bm25", response_model=RerankResponse)
     async def rerank_bm25(payload: RerankRequest, request: Request) -> RerankResponse:
         model = _get_loaded_model(request, model_name="bm25")
-        return await _run_rerank_request(payload, request, model)
+        return await _run_rerank_request(
+            payload,
+            request,
+            model,
+            timeout_seconds=DEFAULT_BM25_RERANK_TIMEOUT_SECONDS,
+        )
 
     @app.post("/rerank_sbert", response_model=RerankResponse)
     async def rerank_sbert(payload: RerankRequest, request: Request) -> RerankResponse:
         model = _get_loaded_model(request, model_name="sbert")
-        return await _run_rerank_request(payload, request, model)
+        return await _run_rerank_request(
+            payload,
+            request,
+            model,
+            timeout_seconds=DEFAULT_SBERT_RERANK_TIMEOUT_SECONDS,
+        )
 
     return app
 
@@ -137,6 +148,8 @@ async def _run_rerank_request(
     payload: RerankRequest,
     request: Request,
     model: RerankerModel,
+    *,
+    timeout_seconds: float,
 ) -> RerankResponse:
     request.state.num_candidates = len(payload.candidates)
     request.state.model = model
@@ -149,7 +162,7 @@ async def _run_rerank_request(
             model=model,
             query=payload.query,
             candidates=candidates,
-            timeout_seconds=DEFAULT_RERANK_TIMEOUT_SECONDS,
+            timeout_seconds=timeout_seconds,
         )
     except RerankTimeoutError as exc:
         request.app.state.logger.warning(
