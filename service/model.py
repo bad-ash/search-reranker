@@ -13,6 +13,7 @@ from training.bm25 import BM25Artifact, BM25Scorer
 
 DEFAULT_ARTIFACT_PATH = Path("artifacts/bm25_artifact.json")
 DEFAULT_SBERT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_SBERT_CACHE_FOLDER = "/app/.hf/sentence_transformers"
 
 
 @dataclass(frozen=True)
@@ -98,7 +99,11 @@ class SBERTReranker(RerankerModel):
     @classmethod
     def load(cls, model_name: str = DEFAULT_SBERT_MODEL_NAME) -> SBERTReranker:
         try:
-            embedder = SentenceTransformer(model_name)
+            embedder = SentenceTransformer(
+                model_name,
+                cache_folder=DEFAULT_SBERT_CACHE_FOLDER,
+                local_files_only=True,
+            )
         except Exception as exc:
             raise ModelLoadError(f"SBERT model failed to load: {model_name}") from exc
         return cls(embedder, model_name)
